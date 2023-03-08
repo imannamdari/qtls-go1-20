@@ -106,6 +106,8 @@ const (
 	extensionSignatureAlgorithmsCert uint16 = 50
 	extensionKeyShare                uint16 = 51
 	extensionRenegotiationInfo       uint16 = 0xff01
+	extensionECH                     uint16 = 0xfe0d // draft-ietf-tls-esni-13
+	extensionECHOuterExtensions      uint16 = 0xfd00 // draft-ietf-tls-esni-13
 )
 
 // TLS signaling cipher suite values
@@ -174,6 +176,7 @@ const (
 	signatureRSAPSS
 	signatureECDSA
 	signatureEd25519
+	signatureEdDilithium3
 )
 
 // directSigning is a standard Hash value that signals that no pre-hashing
@@ -220,6 +223,40 @@ const (
 // testingOnlyForceDowngradeCanary is set in tests to force the server side to
 // include downgrade canaries even if it's using its highers supported version.
 var testingOnlyForceDowngradeCanary bool
+
+// testingECHTriggerBypassAfterHRR causes the client to bypass ECH after HRR.
+// If available, the client will offer ECH in the first CH only.
+var testingECHTriggerBypassAfterHRR bool
+
+// testingECHTriggerBypassBeforeHRR causes the client to bypass ECH before HRR.
+// The client will offer ECH in the second CH only.
+var testingECHTriggerBypassBeforeHRR bool
+
+// testingECHIllegalHandleAfterHRR causes the client to illegally change the ECH
+// extension after HRR.
+var testingECHIllegalHandleAfterHRR bool
+
+// testingECHTriggerPayloadDecryptError causes the client to to send an
+// inauthentic payload.
+var testingECHTriggerPayloadDecryptError bool
+
+// testingECHOuterExtMany causes a client to incorporate a sequence of
+// outer extensions into the ClientHelloInner when it offers the ECH extension.
+// The "key_share" extension is the only incorporated extension by default.
+var testingECHOuterExtMany bool
+
+// testingECHOuterExtNone causes a client to not use the "outer_extension"
+// mechanism for ECH. The "key_shares" extension is incorporated by default.
+var testingECHOuterExtNone bool
+
+// testingECHOuterExtIncorrectOrder causes the client to send the
+// "outer_extension" extension in the wrong order when offering the ECH
+// extension.
+var testingECHOuterExtIncorrectOrder bool
+
+// testingECHOuterExtIllegal causes the client to send in its
+// "outer_extension" extension the codepoint for the ECH extension.
+var testingECHOuterExtIllegal bool
 
 type ConnectionState = tls.ConnectionState
 
@@ -725,6 +762,11 @@ type config struct {
 	// its key share in TLS 1.3. This may change in the future.
 	CurvePreferences []CurveID
 
+	// PQSignatureSchemesEnabled controls whether additional post-quantum
+	// signature schemes are supported for peer certificates. For available
+	// signature schemes, see tls_cf.go.
+	PQSignatureSchemesEnabled bool
+
 	// DynamicRecordSizingDisabled disables adaptive sizing of TLS records.
 	// When true, the largest possible TLS record size is always used. When
 	// false, the size of TLS records may be adjusted in an attempt to
@@ -742,6 +784,45 @@ type config struct {
 	// Use of KeyLogWriter compromises security and should only be
 	// used for debugging.
 	KeyLogWriter io.Writer
+
+	// ECHEnabled determines whether the ECH extension is enabled for this
+	// connection.
+	ECHEnabled bool
+
+	// ClientECHConfigs are the parameters used by the client when it offers the
+	// ECH extension. If ECH is enabled, a suitable configuration is found, and
+	// the client supports TLS 1.3, then it will offer ECH in this handshake.
+	// Otherwise, if ECH is enabled, it will send a dummy ECH extension.
+	ClientECHConfigs []ECHConfig
+
+	// ServerECHProvider is the ECH provider used by the client-facing server
+	// for the ECH extension. If the client offers ECH and TLS 1.3 is
+	// negotiated, then the provider is used to compute the HPKE context
+	// (draft-irtf-cfrg-hpke-07), which in turn is used to decrypt the extension
+	// payload.
+	ServerECHProvider ECHProvider
+
+	// CFEventHandler, if set, is called by the client and server at various
+	// points during the handshake to handle specific events. This is used
+	// primarily for collecting metrics.
+	//
+	// NOTE: This feature is used to implement Cloudflare-internal features.
+	// This feature is unstable and applications MUST NOT depend on it.
+	CFEventHandler func(event CFEvent)
+
+	// CFControl is used to pass additional TLS configuration information to
+	// HTTP requests via ConnectionState.
+	//
+	// NOTE: This feature is used to implement Cloudflare-internal features.
+	// This feature is unstable and applications MUST NOT depend on it.
+	CFControl interface{}
+
+	// SupportDelegatedCredential is true if the client or server is willing
+	// to negotiate the delegated credential extension.
+	// This can only be used with TLS 1.3.
+	//
+	// See https://tools.ietf.org/html/draft-ietf-tls-subcerts.
+	SupportDelegatedCredential bool
 
 	// mutex protects sessionTicketKeys and autoSessionTicketKeys.
 	mutex sync.RWMutex
