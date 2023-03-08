@@ -8,6 +8,7 @@ package qtls
 
 import (
 	"bytes"
+	"circl/hpke"
 	"context"
 	"crypto/cipher"
 	"crypto/subtle"
@@ -126,6 +127,20 @@ type Conn struct {
 	used0RTT bool
 
 	tmp [16]byte
+
+	// State used for the ECH extension.
+	ech struct {
+		sealer hpke.Sealer // The client's HPKE context
+		opener hpke.Opener // The server's HPKE context
+
+		// The state shared by the client and server.
+		offered      bool   // Client offered ECH
+		greased      bool   // Client greased ECH
+		accepted     bool   // Server accepted ECH
+		retryConfigs []byte // The retry configurations
+		configId     uint8  // The ECH config id
+		maxNameLen   int    // maximum_name_len indicated by the ECH config
+	}
 
 	connStateMutex sync.Mutex
 	connState      ConnectionStateWith0RTT
@@ -1643,4 +1658,10 @@ func (c *Conn) VerifyHostname(host string) error {
 		return errors.New("tls: handshake did not verify certificate chain")
 	}
 	return c.peerCertificates[0].VerifyHostname(host)
+}
+
+func (c *Conn) handleCFEvent(event CFEvent) {
+	if c.config.CFEventHandler != nil {
+		c.config.CFEventHandler(event)
+	}
 }
